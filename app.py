@@ -1,5 +1,6 @@
 import io
 import re
+import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
 
@@ -44,6 +45,36 @@ def parse_gl_data(gl_uploaded):
     return None
 
 
+# Fungsi Generator XML Coretax Unifikasi
+def generate_coretax_xml(df_tax):
+  root = ET.Element("BupotUnifikasi")
+  root.set("xmlns", "http://pajak.go.id/coretax/bupotunifikasi")
+
+  header = ET.SubElement(root, "Header")
+  ET.SubElement(header, "TahunPajak").text = "2026"
+  ET.SubElement(header, "MasaPajak").text = "09"
+  ET.SubElement(header, "NPWPnPemberi").text = (
+      "010000000000000"  # NPWP Cabang Nasmoco
+  )
+
+  list_bupot = ET.SubElement(root, "DaftarBuktiPotong")
+
+  for idx, row in df_tax.iterrows():
+    bupot = ET.SubElement(list_bupot, "BuktiPotong")
+    ET.SubElement(bupot, "NomorBukti").text = str(row["No Bukti"])
+    ET.SubElement(bupot, "Tanggal").text = (
+        str(row["Tanggal"])[:10] if pd.notna(row["Tanggal"]) else ""
+    )
+    ET.SubElement(bupot, "NPWP_NIK").text = str(row["NPWP / NIK"])
+    ET.SubElement(bupot, "NamaWp").text = str(row["Vendor Kamus"])
+    ET.SubElement(bupot, "JenisPajak").text = str(row["Jenis Pajak"])
+    ET.SubElement(bupot, "Tarif").text = str(row["Tarif"])
+    ET.SubElement(bupot, "JumlahDPP").text = str(row["Kredit (DPP/Potongan)"])
+
+  xml_str = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+  return xml_str
+
+
 if gl_file and db_file:
   df_db = load_database(db_file)
   df_gl = parse_gl_data(gl_file)
@@ -67,7 +98,11 @@ if gl_file and db_file:
           col2_val = str(row.iloc[2]) if pd.notna(row.iloc[2]) else ""
 
           # Jika kolom 0 adalah nomor urut transaksi dan kolom 2 berawalan 2145
-          if pd.notna(val_no) and pd.notna(val_date) and col2_val.startswith("2145"):
+          if (
+              pd.notna(val_no)
+              and pd.notna(val_date)
+              and col2_val.startswith("2145")
+          ):
             akun_val = col2_val
             keterangan = str(row.iloc[6]) if pd.notna(row.iloc[6]) else ""
 
@@ -126,19 +161,33 @@ if gl_file and db_file:
           st.subheader("📊 Ringkasan Total per Jenis Pajak")
           st.dataframe(summary)
 
-          # Download Excel Rekap
+          # Tombol Download Excel Rekap
           output = io.BytesIO()
           with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_tax.to_excel(writer, sheet_name="Detail_Rekap_Pajak", index=False)
             summary.to_excel(writer, sheet_name="Summary", index=False)
           excel_data = output.getvalue()
 
-          st.download_button(
-              label="📥 Download File Rekap Excel Lengkap (.xlsx)",
-              data=excel_data,
-              file_name="Rekap_Pajak_Nasmoco_Matched.xlsx",
-              mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          )
+          col1, col2 = st.columns(2)
+          with col1:
+            st.download_button(
+                label="📥 Download File Rekap Excel Lengkap (.xlsx)",
+                data=excel_data,
+                file_name="Rekap_Pajak_Nasmoco_Matched.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ),
+            )
+
+          # Tombol Download XML Coretax
+          with col2:
+            xml_data = generate_coretax_xml(df_tax)
+            st.download_button(
+                label="📄 Download File XML Coretax DJP (.xml)",
+                data=xml_data,
+                file_name="Coretax_Unifikasi_Nasmoco.xml",
+                mime="application/xml",
+            )
         else:
           st.warning(
               "Tidak ditemukan transaksi dengan akun berawalan 2145 pada baris"
